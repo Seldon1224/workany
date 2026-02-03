@@ -1,14 +1,15 @@
 import { useEffect, useRef, useState } from 'react';
-import { readFile, stat } from '@tauri-apps/plugin-fs';
 import { ExternalLink, Loader2, Video } from 'lucide-react';
 
 import { FileTooLarge } from './FileTooLarge';
 import type { PreviewComponentProps } from './types';
 import {
+  getFileStatViaAPI,
   getVideoMimeType,
   isRemoteUrl,
   MAX_PREVIEW_SIZE,
   openFileExternal,
+  readFileViaAPI,
 } from './utils';
 
 export function VideoPreview({ artifact }: PreviewComponentProps) {
@@ -50,7 +51,7 @@ export function VideoPreview({ artifact }: PreviewComponentProps) {
       try {
         // Check file size first for local files
         if (!isRemoteUrl(artifact.path)) {
-          const fileInfo = await stat(artifact.path);
+          const fileInfo = await getFileStatViaAPI(artifact.path);
           if (fileInfo.size > MAX_PREVIEW_SIZE) {
             console.log('[Video Preview] File too large:', fileInfo.size);
             setFileTooLarge(fileInfo.size);
@@ -66,14 +67,14 @@ export function VideoPreview({ artifact }: PreviewComponentProps) {
             : artifact.path;
           setVideoUrl(url);
         } else {
-          // Local file - read as blob using Tauri fs plugin
+          // Local file - read as blob using backend API
           console.log('[Video Preview] Reading local video file...');
 
           const ext = artifact.path.split('.').pop()?.toLowerCase() || '';
           const mimeType = getVideoMimeType(ext);
 
-          const data = await readFile(artifact.path);
-          const blob = new Blob([data], { type: mimeType });
+          const data = await readFileViaAPI(artifact.path);
+          const blob = new Blob([data.buffer as ArrayBuffer], { type: mimeType });
           console.log('[Video Preview] Loaded', blob.size, 'bytes');
 
           blobUrl = URL.createObjectURL(blob);

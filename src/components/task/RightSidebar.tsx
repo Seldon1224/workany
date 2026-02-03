@@ -1071,7 +1071,7 @@ export function RightSidebar({
 
     async function loadWorkingFiles() {
       console.log('[RightSidebar] loadWorkingFiles called with workingDir:', workingDir);
-      if (!workingDir || !workingDir.startsWith('/')) {
+      if (!workingDir || (!workingDir.startsWith('/') && !workingDir.startsWith('~'))) {
         console.log('[RightSidebar] workingDir is empty or invalid');
         setWorkingFiles([]);
         setLoadingFiles(false);

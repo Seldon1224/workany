@@ -1,14 +1,15 @@
 import { useEffect, useState } from 'react';
-import { readFile, stat } from '@tauri-apps/plugin-fs';
 import { Eye, FileText, Loader2 } from 'lucide-react';
 
 import { FileTooLarge } from './FileTooLarge';
 import type { PreviewComponentProps } from './types';
 import {
   getImageMimeType,
+  getFileStatViaAPI,
   isRemoteUrl,
   MAX_PREVIEW_SIZE,
   openFileExternal,
+  readFileViaAPI,
 } from './utils';
 
 export function ImagePreview({ artifact }: PreviewComponentProps) {
@@ -49,7 +50,7 @@ export function ImagePreview({ artifact }: PreviewComponentProps) {
       try {
         // Check file size first for local files
         if (!isRemoteUrl(artifact.path)) {
-          const fileInfo = await stat(artifact.path);
+          const fileInfo = await getFileStatViaAPI(artifact.path);
           if (fileInfo.size > MAX_PREVIEW_SIZE) {
             console.log('[Image Preview] File too large:', fileInfo.size);
             setFileTooLarge(fileInfo.size);
@@ -78,10 +79,10 @@ export function ImagePreview({ artifact }: PreviewComponentProps) {
           }
           blob = await response.blob();
         } else {
-          // Local file - use Tauri fs plugin
+          // Local file - use backend API
           console.log('[Image Preview] Reading local image file...');
-          const data = await readFile(artifact.path);
-          blob = new Blob([data], { type: mimeType });
+          const data = await readFileViaAPI(artifact.path);
+          blob = new Blob([data.buffer as ArrayBuffer], { type: mimeType });
         }
 
         console.log('[Image Preview] Loaded', blob.size, 'bytes');

@@ -184,9 +184,23 @@ files.post('/readdir', async (c) => {
       return c.json({ error: 'Path is required' }, 400);
     }
 
+    // Expand ~ to home directory
+    let expandedPath = dirPath;
+    if (dirPath.startsWith('~')) {
+      const homedir = getHomeDir();
+      expandedPath = dirPath.replace(/^~/, homedir);
+    }
+
     // Security check: only allow reading from home directory
-    const homedir = process.env.HOME || process.env.USERPROFILE || '';
-    if (!dirPath.startsWith(homedir) && !dirPath.startsWith('/tmp')) {
+    const homedir = getHomeDir();
+    const tempDir = process.platform === 'win32'
+      ? (process.env.TEMP || process.env.TMP || 'C:\\Windows\\Temp')
+      : '/tmp';
+    const normalizedPath = process.platform === 'win32' ? expandedPath.toLowerCase() : expandedPath;
+    const normalizedHome = process.platform === 'win32' ? homedir.toLowerCase() : homedir;
+    const normalizedTemp = process.platform === 'win32' ? tempDir.toLowerCase() : tempDir;
+
+    if (!normalizedPath.startsWith(normalizedHome) && !normalizedPath.startsWith(normalizedTemp)) {
       return c.json(
         { error: 'Access denied: path must be within home directory' },
         403
@@ -195,7 +209,7 @@ files.post('/readdir', async (c) => {
 
     // Check if directory exists
     try {
-      const stat = await fs.stat(dirPath);
+      const stat = await fs.stat(expandedPath);
       if (!stat.isDirectory()) {
         return c.json({ success: false, error: 'Path is not a directory', files: [] }, 400);
       }
@@ -203,11 +217,11 @@ files.post('/readdir', async (c) => {
       return c.json({ success: false, error: 'Directory does not exist', files: [] }, 200);
     }
 
-    const files = await readDirRecursive(dirPath, 0, maxDepth);
+    const files = await readDirRecursive(expandedPath, 0, maxDepth);
 
     return c.json({
       success: true,
-      path: dirPath,
+      path: expandedPath,
       files,
     });
   } catch (error) {

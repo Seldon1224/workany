@@ -335,3 +335,67 @@ export function parseFrontmatter(content: string): {
 export function stripFrontmatter(content: string): string {
   return parseFrontmatter(content).content;
 }
+
+/**
+ * Read file via backend API and return as Uint8Array
+ * This replaces Tauri's readFile function for cross-platform compatibility
+ */
+export async function readFileViaAPI(filePath: string): Promise<Uint8Array> {
+  try {
+    const response = await fetch(`${API_BASE_URL}/files/read-binary`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ path: filePath }),
+    });
+
+    if (!response.ok) {
+      throw new Error(`Failed to read file: ${response.status} ${response.statusText}`);
+    }
+
+    const result = await response.json();
+    if (!result.success) {
+      throw new Error(result.error || 'Failed to read file');
+    }
+
+    // Convert base64 to Uint8Array
+    const base64 = result.content;
+    const binaryString = atob(base64);
+    const bytes = new Uint8Array(binaryString.length);
+    for (let i = 0; i < binaryString.length; i++) {
+      bytes[i] = binaryString.charCodeAt(i);
+    }
+
+    return bytes;
+  } catch (error) {
+    console.error('[readFileViaAPI] Error:', error);
+    throw error;
+  }
+}
+
+/**
+ * Get file stat via backend API
+ * This replaces Tauri's stat function for cross-platform compatibility
+ */
+export async function getFileStatViaAPI(filePath: string): Promise<{ size: number }> {
+  try {
+    const response = await fetch(`${API_BASE_URL}/files/stat`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ path: filePath }),
+    });
+
+    if (!response.ok) {
+      throw new Error(`Failed to stat file: ${response.status} ${response.statusText}`);
+    }
+
+    const result = await response.json();
+    if (!result.exists) {
+      throw new Error('File does not exist');
+    }
+
+    return { size: result.size };
+  } catch (error) {
+    console.error('[getFileStatViaAPI] Error:', error);
+    throw error;
+  }
+}

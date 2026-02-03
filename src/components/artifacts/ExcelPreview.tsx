@@ -1,13 +1,12 @@
 import { useEffect, useState } from 'react';
 import { cn } from '@/shared/lib/utils';
-import { readFile, stat } from '@tauri-apps/plugin-fs';
 import JSZip from 'jszip';
 import { ExternalLink, FileSpreadsheet, Loader2 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 
 import { FileTooLarge } from './FileTooLarge';
 import type { ExcelSheet, PreviewComponentProps } from './types';
-import { isRemoteUrl, MAX_PREVIEW_SIZE, openFileExternal } from './utils';
+import { getFileStatViaAPI, isRemoteUrl, MAX_PREVIEW_SIZE, openFileExternal, readFileViaAPI } from './utils';
 
 export function ExcelPreview({ artifact }: PreviewComponentProps) {
   const [sheets, setSheets] = useState<ExcelSheet[]>([]);
@@ -35,7 +34,7 @@ export function ExcelPreview({ artifact }: PreviewComponentProps) {
       try {
         // Check file size first for local files
         if (!isRemoteUrl(artifact.path)) {
-          const fileInfo = await stat(artifact.path);
+          const fileInfo = await getFileStatViaAPI(artifact.path);
           if (fileInfo.size > MAX_PREVIEW_SIZE) {
             console.log('[Excel Preview] File too large:', fileInfo.size);
             setFileTooLarge(fileInfo.size);
@@ -60,10 +59,10 @@ export function ExcelPreview({ artifact }: PreviewComponentProps) {
           }
           arrayBuffer = await response.arrayBuffer();
         } else {
-          // Local file - use Tauri fs plugin
+          // Local file - use backend API
           console.log('[Excel Preview] Reading local Excel file...');
-          const data = await readFile(artifact.path);
-          arrayBuffer = data.buffer;
+          const data = await readFileViaAPI(artifact.path);
+          arrayBuffer = data.buffer as ArrayBuffer;
         }
 
         console.log('[Excel Preview] Loaded', arrayBuffer.byteLength, 'bytes');

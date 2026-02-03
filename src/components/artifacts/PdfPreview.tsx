@@ -1,10 +1,9 @@
 import { useEffect, useState } from 'react';
-import { readFile, stat } from '@tauri-apps/plugin-fs';
 import { FileText, Loader2 } from 'lucide-react';
 
 import { FileTooLarge } from './FileTooLarge';
 import type { PreviewComponentProps } from './types';
-import { isRemoteUrl, MAX_PREVIEW_SIZE, openFileExternal } from './utils';
+import { getFileStatViaAPI, isRemoteUrl, MAX_PREVIEW_SIZE, openFileExternal, readFileViaAPI } from './utils';
 
 export function PdfPreview({ artifact }: PreviewComponentProps) {
   const [pdfUrl, setPdfUrl] = useState<string | null>(null);
@@ -33,7 +32,7 @@ export function PdfPreview({ artifact }: PreviewComponentProps) {
       try {
         // Check file size first for local files
         if (!isRemoteUrl(artifact.path)) {
-          const fileInfo = await stat(artifact.path);
+          const fileInfo = await getFileStatViaAPI(artifact.path);
           if (fileInfo.size > MAX_PREVIEW_SIZE) {
             console.log('[PDF Preview] File too large:', fileInfo.size);
             setFileTooLarge(fileInfo.size);
@@ -58,10 +57,10 @@ export function PdfPreview({ artifact }: PreviewComponentProps) {
           }
           blob = await response.blob();
         } else {
-          // Local file - use Tauri fs plugin
+          // Local file - use backend API
           console.log('[PDF Preview] Reading local PDF file...');
-          const data = await readFile(artifact.path);
-          blob = new Blob([data], { type: 'application/pdf' });
+          const data = await readFileViaAPI(artifact.path);
+          blob = new Blob([data.buffer as ArrayBuffer], { type: 'application/pdf' });
         }
 
         console.log('[PDF Preview] Loaded', blob.size, 'bytes');
