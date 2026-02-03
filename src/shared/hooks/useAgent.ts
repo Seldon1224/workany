@@ -1123,6 +1123,9 @@ export function useAgent(): UseAgentReturn {
 
       // Build agent messages immediately with placeholder attachments
       const agentMessages: AgentMessage[] = [];
+      let restoredPlan: TaskPlan | undefined;
+      let syntheticPlanMessage: AgentMessage | undefined;
+
       for (let i = 0; i < dbMessages.length; i++) {
         const msg = dbMessages[i];
         if (msg.type === 'user') {
@@ -1164,11 +1167,88 @@ export function useAgent(): UseAgentReturn {
             content: msg.content || undefined,
           });
         } else if (msg.type === 'tool_use') {
+          const input = msg.tool_input
+            ? JSON.parse(msg.tool_input)
+            : undefined;
+
           agentMessages.push({
             type: 'tool_use' as const,
             name: msg.tool_name || undefined,
-            input: msg.tool_input ? JSON.parse(msg.tool_input) : undefined,
+            input,
           });
+
+          // ✨ Restore plan from TodoWrite history
+          if (msg.tool_name === 'TodoWrite' && input && input.todos) {
+            const todos = input.todos as Array<{
+              id?: string;
+              activeForm?: string;
+              content?: string;
+              description?: string;
+              status?: string;
+            }>;
+
+            if (Array.isArray(todos)) {
+              // If no plan exists yet, create it from this TodoWrite
+              if (!restoredPlan) {
+                // Infer prompt from first user message if possible
+                const firstUserMsg = dbMessages.find((m) => m.type === 'user');
+                const goal = firstUserMsg?.content
+                  ? `执行任务: ${firstUserMsg.content.slice(0, 50)}...`
+                  : '执行任务';
+
+                restoredPlan = {
+                  id: `plan_${Date.now()}_restored`,
+                  goal,
+                  steps: todos.map((todo, index) => ({
+                    id: todo.id || String(index + 1),
+                    description:
+                      todo.content ||
+                      todo.description ||
+                      todo.activeForm ||
+                      '未命名步骤',
+                    status: 'pending' as const,
+                  })),
+                  createdAt: new Date(msg.created_at || Date.now()),
+                };
+
+                // Add synthetic plan message immediately after TodoWrite
+                syntheticPlanMessage = {
+                  type: 'plan' as const,
+                  plan: restoredPlan,
+                };
+                agentMessages.push(syntheticPlanMessage);
+              } else {
+                // Update existing plan with new status
+                restoredPlan = {
+                  ...restoredPlan,
+                  steps: restoredPlan.steps.map((step) => {
+                    const todo = todos.find((t) => {
+                      const todoDesc =
+                        t.content || t.description || t.activeForm || '';
+                      return t.id === step.id || todoDesc === step.description;
+                    });
+
+                    if (todo && todo.status) {
+                      let status: 'pending' | 'in_progress' | 'completed' =
+                        'pending';
+                      if (todo.status === 'completed') {
+                        status = 'completed';
+                      } else if (todo.status === 'in_progress') {
+                        status = 'in_progress';
+                      }
+                      return { ...step, status };
+                    }
+                    return step;
+                  }),
+                };
+                
+                // Update the plan in the message to reflect the latest state
+                if (syntheticPlanMessage && syntheticPlanMessage.type === 'plan') {
+                  syntheticPlanMessage.plan = restoredPlan;
+                }
+              }
+            }
+          }
         } else if (msg.type === 'tool_result') {
           agentMessages.push({
             type: 'tool_result' as const,
@@ -1219,6 +1299,9 @@ export function useAgent(): UseAgentReturn {
       // Set messages immediately (with loading placeholders for attachments)
       setMessages(agentMessages);
       setTaskId(id);
+      if (restoredPlan) {
+        setPlan(restoredPlan);
+      }
 
       // Load attachments asynchronously in background
       if (attachmentLoadTasks.length > 0) {
@@ -1425,17 +1508,21 @@ export function useAgent(): UseAgentReturn {
 
                   // ✨ Handle TodoWrite tool - generate/update plan dynamically
                   if (isActive && data.name === 'TodoWrite' && data.input) {
+                    console.log('[TodoWrite] Raw input:', JSON.stringify(data.input, null, 2));
+                    
                     const input = data.input as {
                       todos?: Array<{
-                        id: string;
-                        description: string;
+                        id?: string;
+                        activeForm?: string;
+                        content?: string;
+                        description?: string;
                         status?: string;
                       }>;
                     };
 
                     if (input.todos && Array.isArray(input.todos)) {
-                      // First TodoWrite: generate plan and wait for approval
-                      if (!todoToolUseIdRef.current && phase === 'planning') {
+                      // First TodoWrite: generate plan
+                      if (!todoToolUseIdRef.current) {
                         todoToolUseIdRef.current = toolUseId;
 
                         const generatedPlan: TaskPlan = {
@@ -1443,7 +1530,8 @@ export function useAgent(): UseAgentReturn {
                           goal: `执行任务: ${initialPrompt.slice(0, 50)}${initialPrompt.length > 50 ? '...' : ''}`,
                           steps: input.todos.map((todo, index) => ({
                             id: todo.id || String(index + 1),
-                            description: todo.description,
+                            // Use content or description or activeForm
+                            description: todo.content || todo.description || todo.activeForm || '未命名步骤',
                             status: 'pending' as const,
                           })),
                           createdAt: new Date(),
@@ -1454,22 +1542,31 @@ export function useAgent(): UseAgentReturn {
                           generatedPlan
                         );
                         setPlan(generatedPlan);
-                        setPhase('awaiting_approval');
 
                         // Add plan message to UI
                         setMessages((prev) => [
                           ...prev,
                           { type: 'plan', plan: generatedPlan },
                         ]);
+
+                        // If in planning phase, wait for approval
+                        // If already executing, just show the plan without approval
+                        if (phase === 'planning') {
+                          setPhase('awaiting_approval');
+                        }
                       }
                       // Subsequent TodoWrite: update step status
-                      else if (phase === 'executing') {
+                      else {
                         setPlan((currentPlan) => {
                           if (!currentPlan) return currentPlan;
 
                           const updatedSteps = currentPlan.steps.map((step) => {
                             const todo = input.todos!.find(
-                              (t) => t.id === step.id
+                              (t) => {
+                                // Match by id, or by description/content
+                                const todoDesc = t.content || t.description || t.activeForm || '';
+                                return t.id === step.id || todoDesc === step.description;
+                              }
                             );
                             if (todo && todo.status) {
                               // Map todo status to our status
