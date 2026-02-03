@@ -159,24 +159,10 @@ export interface AgentOptions {
   mcpConfig?: McpConfig;
 }
 
-export interface PlanOptions extends AgentOptions {
-  /** Planning-specific options */
-}
-
-export interface ExecuteOptions extends AgentOptions {
-  /** Plan ID to execute */
-  planId: string;
-  /** Original prompt that created the plan */
-  originalPrompt: string;
-  /** Sandbox configuration */
-  sandbox?: SandboxConfig;
-  /** Plan object (optional - if not provided, will look up by planId) */
-  plan?: TaskPlan;
-}
-
 // ============================================================================
 // Agent Interface
 // ============================================================================
+
 
 /**
  * Base interface for all agent implementations.
@@ -188,34 +174,16 @@ export interface IAgent {
 
   /**
    * Run the agent with a prompt (direct execution mode)
+   * Claude Agent SDK handles task planning internally via TodoWrite tool
    */
   run(prompt: string, options?: AgentOptions): AsyncGenerator<AgentMessage>;
-
-  /**
-   * Run planning phase only (returns a plan for approval)
-   */
-  plan(prompt: string, options?: PlanOptions): AsyncGenerator<AgentMessage>;
-
-  /**
-   * Execute an approved plan
-   */
-  execute(options: ExecuteOptions): AsyncGenerator<AgentMessage>;
 
   /**
    * Stop the current execution
    */
   stop(sessionId: string): Promise<void>;
-
-  /**
-   * Get a stored plan by ID
-   */
-  getPlan(planId: string): TaskPlan | undefined;
-
-  /**
-   * Delete a stored plan
-   */
-  deletePlan(planId: string): void;
 }
+
 
 // ============================================================================
 // Session Management

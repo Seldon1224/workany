@@ -1,11 +1,11 @@
-// Import for factory
 import type { AgentPlugin } from '@/core/agent/plugin';
 import { getAgentRegistry } from '@/core/agent/registry';
 import type { AgentConfig, AgentProvider, IAgent } from '@/core/agent/types';
 import { DEFAULT_AGENT_PROVIDER, DEFAULT_WORK_DIR } from '@/config/constants';
 import { claudePlugin } from '@/extensions/agent/claude';
-import { codexPlugin } from '@/extensions/agent/codex';
-import { deepagentsPlugin } from '@/extensions/agent/deepagents';
+// TODO: Update codex and deepagents to new simplified architecture
+// import { codexPlugin } from '@/extensions/agent/codex';
+// import { deepagentsPlugin } from '@/extensions/agent/deepagents';
 
 /**
  * Agent SDK Abstraction Layer
@@ -65,12 +65,10 @@ export {
 // Export base utilities
 export {
   BaseAgent,
-  PLANNING_INSTRUCTION,
-  formatPlanForExecution,
-  parsePlanFromResponse,
   getWorkspaceInstruction,
   type AgentCapabilities,
 } from '@/core/agent/base';
+
 
 // Export provider implementations
 export {
@@ -78,24 +76,26 @@ export {
   createClaudeAgent,
   claudePlugin,
 } from '@/extensions/agent/claude';
-export {
-  CodexAgent,
-  createCodexAgent,
-  codexPlugin,
-} from '@/extensions/agent/codex';
-export {
-  DeepAgentsAdapter,
-  createDeepAgentsAdapter,
-  deepagentsPlugin,
-} from '@/extensions/agent/deepagents';
+// TODO: Re-enable after refactoring
+// export {
+//   CodexAgent,
+//   createCodexAgent,
+//   codexPlugin,
+// } from '@/extensions/agent/codex';
+// export {
+//   DeepAgentsAdapter,
+//   createDeepAgentsAdapter,
+//   deepagentsPlugin,
+// } from '@/extensions/agent/deepagents';
 
 /**
  * All built-in agent plugins
  */
 export const builtinAgentPlugins: AgentPlugin[] = [
   claudePlugin,
-  codexPlugin,
-  deepagentsPlugin,
+  // TODO: Re-enable after refactoring
+  // codexPlugin,
+  // deepagentsPlugin,
 ];
 
 /**

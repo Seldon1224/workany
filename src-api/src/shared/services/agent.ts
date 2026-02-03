@@ -32,9 +32,6 @@ let globalAgent: IAgent | null = null;
 // Store active sessions for backward compatibility
 const activeSessions = new Map<string, { abortController: AbortController }>();
 
-// Global plan store (shared across all agent instances)
-const globalPlanStore = new Map<string, TaskPlan>();
-
 /**
  * Get or create the global agent instance
  * If modelConfig is provided, creates a new agent with those settings
@@ -71,13 +68,11 @@ export function getAgent(config?: Partial<AgentConfig>): IAgent {
 /**
  * Create a new agent session
  */
-export function createSession(
-  phase: 'plan' | 'execute' = 'plan'
-): AgentSession {
+export function createSession(): AgentSession {
   const session: AgentSession = {
     id: Date.now().toString(),
     createdAt: new Date(),
-    phase: phase === 'plan' ? 'planning' : 'executing',
+    phase: 'executing',
     isAborted: false,
     abortController: new AbortController(),
   };
@@ -117,107 +112,7 @@ export function deleteSession(sessionId: string): boolean {
 }
 
 /**
- * Get a stored plan from global store
- */
-export function getPlan(planId: string): TaskPlan | undefined {
-  return globalPlanStore.get(planId);
-}
-
-/**
- * Save a plan to global store
- */
-export function savePlan(plan: TaskPlan): void {
-  globalPlanStore.set(plan.id, plan);
-  console.log(`[AgentService] Plan saved to global store: ${plan.id}`);
-}
-
-/**
- * Delete a plan from global store
- */
-export function deletePlan(planId: string): boolean {
-  const deleted = globalPlanStore.delete(planId);
-  if (deleted) {
-    console.log(`[AgentService] Plan deleted from global store: ${planId}`);
-  }
-  return deleted;
-}
-
-/**
- * Run the planning phase
- */
-export async function* runPlanningPhase(
-  prompt: string,
-  session: AgentSession,
-  modelConfig?: { apiKey?: string; baseUrl?: string; model?: string }
-): AsyncGenerator<AgentMessage> {
-  const agent = getAgent(modelConfig);
-
-  for await (const message of agent.plan(prompt, {
-    sessionId: session.id,
-    abortController: session.abortController,
-  })) {
-    // Intercept plan messages and save to global store
-    if (message.type === 'plan' && message.plan) {
-      savePlan(message.plan);
-    }
-    yield message;
-  }
-}
-
-/**
- * Run the execution phase
- */
-export async function* runExecutionPhase(
-  planId: string,
-  session: AgentSession,
-  originalPrompt: string,
-  workDir?: string,
-  taskId?: string,
-  modelConfig?: { apiKey?: string; baseUrl?: string; model?: string },
-  sandboxConfig?: SandboxConfig,
-  skillsConfig?: SkillsConfig,
-  mcpConfig?: McpConfig
-): AsyncGenerator<AgentMessage> {
-  const agent = getAgent(modelConfig);
-
-  // Get the plan from global store to pass to agent
-  // This is necessary because each agent instance has its own plan store
-  const plan = getPlan(planId);
-  if (!plan) {
-    yield { type: 'error', message: `Plan not found: ${planId}` };
-    yield { type: 'done' };
-    return;
-  }
-
-  serviceLogger.info(`[AgentService] Executing plan: ${planId} (${plan.goal})`);
-  // Log sandbox config for debugging - write to file for packaged app visibility
-  serviceLogger.info('[AgentService] runExecutionPhase sandbox config:', {
-    hasSandboxConfig: !!sandboxConfig,
-    sandboxEnabled: sandboxConfig?.enabled,
-    sandboxProvider: sandboxConfig?.provider,
-    apiEndpoint: sandboxConfig?.apiEndpoint,
-  });
-  serviceLogger.info('[AgentService] runExecutionPhase skills config:', skillsConfig);
-  serviceLogger.info('[AgentService] runExecutionPhase mcp config:', mcpConfig);
-
-  for await (const message of agent.execute({
-    planId,
-    plan, // Pass the plan directly so agent doesn't need to look it up
-    originalPrompt,
-    sessionId: session.id,
-    cwd: workDir,
-    taskId,
-    abortController: session.abortController,
-    sandbox: sandboxConfig,
-    skillsConfig,
-    mcpConfig,
-  })) {
-    yield message;
-  }
-}
-
-/**
- * Run agent directly (without planning phase)
+ * Run agent directly (uses Claude Agent SDK's built-in task planning)
  */
 export async function* runAgent(
   prompt: string,
@@ -272,7 +167,6 @@ export function stopAgent(sessionId: string): void {
 export type {
   AgentMessage,
   AgentSession,
-  TaskPlan,
   ConversationMessage,
   AgentConfig,
   IAgent,

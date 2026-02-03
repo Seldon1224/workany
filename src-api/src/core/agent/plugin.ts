@@ -89,13 +89,8 @@ export function defineAgentPlugin(plugin: AgentPlugin): AgentPlugin {
 /**
  * Re-export BaseAgent from base.ts for convenience
  */
-export {
-  BaseAgent,
-  PLANNING_INSTRUCTION,
-  formatPlanForExecution,
-  parsePlanFromResponse,
-  getWorkspaceInstruction,
-} from '@/core/agent/base';
+export { BaseAgent, getWorkspaceInstruction } from '@/core/agent/base';
+
 
 // ============================================================================
 // Default Config Schemas

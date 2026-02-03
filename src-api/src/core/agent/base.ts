@@ -12,11 +12,10 @@ import type {
   AgentOptions,
   AgentProvider,
   AgentSession,
-  ExecuteOptions,
   IAgent,
-  PlanOptions,
   TaskPlan,
 } from '@/core/agent/types';
+
 import type { ProviderCapabilities } from '@/shared/provider/types';
 
 /**
@@ -51,7 +50,6 @@ export abstract class BaseAgent implements IAgent {
 
   protected config: AgentConfig;
   protected sessions: Map<string, AgentSession> = new Map();
-  protected plans: Map<string, TaskPlan> = new Map();
 
   constructor(config: AgentConfig) {
     this.config = config;
@@ -93,26 +91,7 @@ export abstract class BaseAgent implements IAgent {
     }
   }
 
-  /**
-   * Store a plan
-   */
-  protected storePlan(plan: TaskPlan): void {
-    this.plans.set(plan.id, plan);
-  }
 
-  /**
-   * Get a stored plan
-   */
-  getPlan(planId: string): TaskPlan | undefined {
-    return this.plans.get(planId);
-  }
-
-  /**
-   * Delete a stored plan
-   */
-  deletePlan(planId: string): void {
-    this.plans.delete(planId);
-  }
 
   /**
    * Stop execution for a session
@@ -158,7 +137,6 @@ export abstract class BaseAgent implements IAgent {
       }
     }
     this.sessions.clear();
-    this.plans.clear();
   }
 
   /**
@@ -186,123 +164,14 @@ export abstract class BaseAgent implements IAgent {
     }
   }
 
-  // Abstract methods to be implemented by providers
+  // Abstract method to be implemented by providers
   abstract run(
     prompt: string,
     options?: AgentOptions
   ): AsyncGenerator<AgentMessage>;
-
-  abstract plan(
-    prompt: string,
-    options?: PlanOptions
-  ): AsyncGenerator<AgentMessage>;
-
-  abstract execute(options: ExecuteOptions): AsyncGenerator<AgentMessage>;
 }
 
-/**
- * Planning instruction template with intent detection
- */
-export const PLANNING_INSTRUCTION = `You are an AI assistant that helps with various tasks. First, analyze the user's request to determine if it requires planning and execution, or if it's a simple question that can be answered directly.
 
-## INTENT DETECTION
-
-**SIMPLE QUESTIONS (answer directly, NO planning needed):**
-- Greetings: "hello", "hi", "who are you", "what can you do"
-- Identity questions: "who are u", "你是谁", "what's your name"
-- Capability questions: "what can you help with", "how do you work"
-- General knowledge questions that don't require tools or file operations
-- Conversations or chitchat
-
-**COMPLEX TASKS (require planning):**
-- File operations: create, read, modify, delete files
-- Code writing or modification
-- Document/presentation/spreadsheet creation
-- Web searching for specific information
-- Multi-step tasks that need tools
-
-## ⚠️ CRITICAL: MANDATORY BACKUP FOR DESTRUCTIVE OPERATIONS
-
-**EXTREMELY IMPORTANT**: Any task that involves MODIFYING, DELETING, MOVING, or RENAMING files MUST include a BACKUP step FIRST in the plan!
-
-**Destructive operations include:**
-- Deleting files or folders (rm, delete, 删除, 清空)
-- Modifying/editing existing files
-- Moving files (mv, move, 移动)
-- Renaming files
-- Clearing/emptying directories (清空, empty, clear)
-
-**For ANY destructive operation, your plan MUST:**
-1. FIRST step: Backup affected files to workspace/backup/ directory
-2. THEN proceed with the actual operation
-
-**Example - User asks "清空桌面" (clear desktop):**
-\`\`\`json
-{"type": "plan", "goal": "清空桌面", "steps": [{"id": "1", "description": "查看桌面文件列表"}, {"id": "2", "description": "备份桌面文件到工作区backup目录"}, {"id": "3", "description": "删除桌面所有项目"}], "notes": "所有文件将先备份到工作区，确保可恢复"}
-\`\`\`
-
-**NEVER skip the backup step for destructive operations!**
-
-## CRITICAL: OUTPUT FORMAT
-
-**IMPORTANT**: You are in PLANNING PHASE. You must ONLY output a structured JSON response.
-- DO NOT write actual code
-- DO NOT generate file contents
-- DO NOT include implementation details
-- DO NOT show formulas or algorithms
-- ONLY describe WHAT will be done, not HOW
-
-For **SIMPLE QUESTIONS**, respond ONLY with:
-\`\`\`json
-{
-  "type": "direct_answer",
-  "answer": "Your friendly, helpful response to the user's question"
-}
-\`\`\`
-
-For **COMPLEX TASKS**, respond ONLY with:
-\`\`\`json
-{
-  "type": "plan",
-  "goal": "Clear description of what will be accomplished",
-  "steps": [
-    { "id": "1", "description": "Brief description of step 1" },
-    { "id": "2", "description": "Brief description of step 2" },
-    { "id": "3", "description": "Brief description of step 3" }
-  ],
-  "notes": "Any important considerations"
-}
-\`\`\`
-
-## STEP GUIDELINES (for complex tasks only)
-- Keep step descriptions SHORT (under 50 characters)
-- Focus on WHAT, not HOW
-- **For destructive ops: ALWAYS include backup step FIRST**
-- Examples: "Create Python script file", "Backup files to workspace", "Delete target files"
-
-## EXAMPLES
-
-User: "who are u"
-Response:
-\`\`\`json
-{"type": "direct_answer", "answer": "I'm WorkAny, an AI assistant that can help you with coding, document creation, and more!"}
-\`\`\`
-
-User: "写个脚本计算鸡兔同笼"
-Response:
-\`\`\`json
-{"type": "plan", "goal": "创建一个Python脚本来解决鸡兔同笼问题", "steps": [{"id": "1", "description": "创建Python脚本文件 chicken_rabbit.py"}, {"id": "2", "description": "实现鸡兔同笼的数学计算逻辑"}, {"id": "3", "description": "添加输入验证和多种解法"}], "notes": "将包含代数法和枚举法两种解法"}
-\`\`\`
-
-User: "删除Downloads文件夹里的所有文件"
-Response:
-\`\`\`json
-{"type": "plan", "goal": "删除Downloads文件夹内容", "steps": [{"id": "1", "description": "查看Downloads文件夹内容"}, {"id": "2", "description": "备份所有文件到工作区backup目录"}, {"id": "3", "description": "删除Downloads文件夹所有文件"}], "notes": "文件将先备份，可随时恢复"}
-\`\`\`
-
-**REMEMBER**: Output ONLY the JSON. No explanations, no code, no formulas before or after the JSON.
-
-User request: `;
 
 /**
  * Sandbox configuration for script execution
@@ -462,6 +331,54 @@ For paths NOT under ${workDir}/, also ask user confirmation first:
 - System paths: /etc/, /usr/, /var/
 - Any absolute path outside workspace
 
+## 🖼️ Image Recognition Tool
+
+**RecognizeImage Tool** is available for analyzing images:
+- Supports: PNG, JPG, JPEG, GIF, WEBP
+- Max file size: 5MB
+- Use absolute paths to image files
+
+**Example:**
+\`\`\`
+RecognizeImage({
+  imagePath: "/absolute/path/to/image.png",
+  question: "请识别验证码" // Optional
+})
+\`\`\`
+
+## 🌐 Playwright Screenshot Best Practices
+
+**CRITICAL: When using browser_take_screenshot from Playwright MCP:**
+
+1. **Use RELATIVE filenames only** (no paths):
+   \`\`\`
+   ✅ CORRECT: filename: "captcha.png"
+   ❌ WRONG:   filename: "/full/path/captcha.png"
+   \`\`\`
+
+2. **Playwright saves to:** \`.playwright-mcp/\` subdirectory automatically
+
+3. **Complete workflow for captcha recognition:**
+   \`\`\`
+   Step 1: Take screenshot with relative filename
+   browser_take_screenshot({
+     element: "验证码图片",
+     filename: "captcha.png"  // ✅ Relative name only
+   })
+   
+   Step 2: Get full path from response
+   // Playwright returns: .playwright-mcp/captcha.png
+   
+   Step 3: Use RecognizeImage with absolute path
+   RecognizeImage({
+     imagePath: "${workDir}/.playwright-mcp/captcha.png"
+   })
+   \`\`\`
+
+**Why this matters:**
+- Playwright MCP enforces security by restricting file writes to \`.playwright-mcp/\` directory
+- Using absolute paths will cause: "Error: Resolved file path is outside of the output directory"
+- Always use relative filenames and let Playwright handle the directory structure
 `;
 
   // Add sandbox instructions when enabled
@@ -511,249 +428,6 @@ sandbox_run_script:
   return instruction;
 }
 
-/**
- * Format a plan for execution phase
- */
-export function formatPlanForExecution(
-  plan: TaskPlan,
-  workDir?: string,
-  sandbox?: SandboxOptions
-): string {
-  const stepsText = plan.steps
-    .map((step, index) => `${index + 1}. ${step.description}`)
-    .join('\n');
 
-  const workspaceNote = workDir
-    ? getWorkspaceInstruction(workDir, sandbox)
-    : '';
 
-  return `You are executing a pre-approved plan. Follow these steps in order:
-${workspaceNote}
-Goal: ${plan.goal}
 
-Steps:
-${stepsText}
-
-${plan.notes ? `Notes: ${plan.notes}` : ''}
-
-Now execute this plan. You have full permissions to use all available tools.
-
-Original request: `;
-}
-
-/**
- * Response type from planning phase
- */
-export type PlanningResponse =
-  | { type: 'direct_answer'; answer: string }
-  | { type: 'plan'; plan: TaskPlan };
-
-/**
- * Extract a complete JSON object from text, properly handling nested braces and strings
- */
-function extractJsonObject(
-  text: string,
-  startIndex: number = 0
-): string | undefined {
-  // Find the first opening brace
-  const firstBrace = text.indexOf('{', startIndex);
-  if (firstBrace === -1) return undefined;
-
-  let braceCount = 0;
-  let inString = false;
-  let escapeNext = false;
-
-  for (let i = firstBrace; i < text.length; i++) {
-    const char = text[i];
-
-    if (escapeNext) {
-      escapeNext = false;
-      continue;
-    }
-
-    if (char === '\\' && inString) {
-      escapeNext = true;
-      continue;
-    }
-
-    if (char === '"' && !escapeNext) {
-      inString = !inString;
-      continue;
-    }
-
-    if (!inString) {
-      if (char === '{') braceCount++;
-      if (char === '}') {
-        braceCount--;
-        if (braceCount === 0) {
-          return text.slice(firstBrace, i + 1);
-        }
-      }
-    }
-  }
-
-  return undefined;
-}
-
-/**
- * Parse planning response from text - can be either a direct answer or a plan
- */
-export function parsePlanningResponse(
-  responseText: string
-): PlanningResponse | undefined {
-  try {
-    // Try to find JSON in the response
-    let jsonString: string | undefined;
-
-    // Pattern 1: JSON in markdown code block
-    const codeBlockMatch = responseText.match(
-      /```(?:json)?\s*(\{[\s\S]*\})\s*```/
-    );
-    if (codeBlockMatch) {
-      // Extract proper JSON from code block
-      jsonString = extractJsonObject(codeBlockMatch[1]);
-    }
-
-    // Pattern 2: Raw JSON object - use proper extraction
-    if (!jsonString) {
-      // Look for JSON that starts with {"type"
-      const typeIndex = responseText.indexOf('{"type"');
-      if (typeIndex !== -1) {
-        jsonString = extractJsonObject(responseText, typeIndex);
-      }
-    }
-
-    // Pattern 3: Try to find any JSON object with "type" field
-    if (!jsonString) {
-      jsonString = extractJsonObject(responseText);
-    }
-
-    if (!jsonString) {
-      // No JSON found - treat as direct answer if it looks like conversational text
-      if (responseText.length > 0 && !responseText.includes('"steps"')) {
-        return { type: 'direct_answer', answer: responseText.trim() };
-      }
-      return undefined;
-    }
-
-    const parsed = JSON.parse(jsonString);
-
-    // Check if it's a direct answer
-    if (parsed.type === 'direct_answer' && parsed.answer) {
-      return { type: 'direct_answer', answer: parsed.answer };
-    }
-
-    // Check if it's a plan (either explicit type or implicit by having steps)
-    if (
-      parsed.type === 'plan' ||
-      (parsed.goal && Array.isArray(parsed.steps))
-    ) {
-      const plan = parsePlanFromResponse(responseText);
-      if (plan) {
-        return { type: 'plan', plan };
-      }
-    }
-
-    return undefined;
-  } catch (error) {
-    console.error('Failed to parse planning response:', error);
-    return undefined;
-  }
-}
-
-/**
- * Parse plan JSON from response text
- */
-export function parsePlanFromResponse(
-  responseText: string
-): TaskPlan | undefined {
-  try {
-    // Try multiple patterns to find JSON in the response
-    let jsonString: string | undefined;
-
-    // Pattern 1: JSON in markdown code block
-    const codeBlockMatch = responseText.match(
-      /```(?:json)?\s*(\{[\s\S]*\})\s*```/
-    );
-    if (codeBlockMatch) {
-      jsonString = extractJsonObject(codeBlockMatch[1]);
-    }
-
-    // Pattern 2: Look for JSON with goal and steps
-    if (!jsonString) {
-      // Find a JSON object that contains "goal"
-      const goalIndex = responseText.indexOf('"goal"');
-      if (goalIndex !== -1) {
-        // Search backward for the opening brace
-        let startIndex = goalIndex;
-        while (startIndex > 0 && responseText[startIndex] !== '{') {
-          startIndex--;
-        }
-        if (responseText[startIndex] === '{') {
-          jsonString = extractJsonObject(responseText, startIndex);
-        }
-      }
-    }
-
-    // Pattern 3: Try to find any JSON object
-    if (!jsonString) {
-      jsonString = extractJsonObject(responseText);
-    }
-
-    if (!jsonString) {
-      console.error('No plan JSON found in response');
-      console.error('Response text:', responseText.slice(0, 500));
-      return undefined;
-    }
-
-    const parsed = JSON.parse(jsonString);
-
-    // Validate the parsed object has required fields
-    if (!parsed.goal || !Array.isArray(parsed.steps)) {
-      console.error('Parsed JSON missing required fields');
-      return undefined;
-    }
-
-    // Filter out empty or too vague steps
-    const validSteps = (parsed.steps || [])
-      .filter((step: { description?: string }) => {
-        const desc = step.description?.toLowerCase() || '';
-        // Filter out generic/vague steps
-        return (
-          desc.length > 10 &&
-          !desc.includes('execute the task') &&
-          !desc.includes('do the work') &&
-          !desc.includes('complete the request')
-        );
-      })
-      .map((step: { id?: string; description?: string }, index: number) => ({
-        id: step.id || String(index + 1),
-        description: step.description || 'Unknown step',
-        status: 'pending' as const,
-      }));
-
-    // If no valid steps after filtering, keep original steps
-    const finalSteps =
-      validSteps.length > 0
-        ? validSteps
-        : (parsed.steps || []).map(
-            (step: { id?: string; description?: string }, index: number) => ({
-              id: step.id || String(index + 1),
-              description: step.description || 'Unknown step',
-              status: 'pending' as const,
-            })
-          );
-
-    return {
-      id: nanoid(),
-      goal: parsed.goal || 'Unknown goal',
-      steps: finalSteps,
-      notes: parsed.notes,
-      createdAt: new Date(),
-    };
-  } catch (error) {
-    console.error('Failed to parse plan:', error);
-    console.error('Response text:', responseText.slice(0, 500));
-    return undefined;
-  }
-}

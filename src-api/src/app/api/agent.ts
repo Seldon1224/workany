@@ -1,14 +1,10 @@
 import { Hono } from 'hono';
 
-import type { SandboxConfig } from '@/core/agent/types';
 import {
   createSession,
   deleteSession,
-  getPlan,
   getSession,
   runAgent,
-  runExecutionPhase,
-  runPlanningPhase,
 } from '@/shared/services/agent';
 import type { AgentRequest } from '@/shared/types/agent';
 
@@ -45,98 +41,7 @@ const SSE_HEADERS = {
   'X-Accel-Buffering': 'no',
 };
 
-// Phase 1: Create a plan (no execution)
-agent.post('/plan', async (c) => {
-  const body = await c.req.json<AgentRequest>();
-
-  console.log('[AgentAPI] POST /plan received:', {
-    hasPrompt: !!body.prompt,
-    hasModelConfig: !!body.modelConfig,
-    modelConfig: body.modelConfig
-      ? {
-          hasApiKey: !!body.modelConfig.apiKey,
-          baseUrl: body.modelConfig.baseUrl,
-          model: body.modelConfig.model,
-        }
-      : null,
-  });
-
-  if (!body.prompt) {
-    return c.json({ error: 'prompt is required' }, 400);
-  }
-
-  const session = createSession('plan');
-  const readable = createSSEStream(
-    runPlanningPhase(body.prompt, session, body.modelConfig)
-  );
-
-  return new Response(readable, { headers: SSE_HEADERS });
-});
-
-// Phase 2: Execute an approved plan
-agent.post('/execute', async (c) => {
-  const body = await c.req.json<{
-    planId: string;
-    prompt: string;
-    workDir?: string;
-    taskId?: string;
-    modelConfig?: { apiKey?: string; baseUrl?: string; model?: string };
-    sandboxConfig?: SandboxConfig;
-    skillsConfig?: {
-      enabled: boolean;
-      userDirEnabled: boolean;
-      appDirEnabled: boolean;
-      skillsPath?: string;
-    };
-    mcpConfig?: {
-      enabled: boolean;
-      userDirEnabled: boolean;
-      appDirEnabled: boolean;
-      mcpConfigPath?: string;
-    };
-  }>();
-
-  console.log('[AgentAPI] POST /execute received:', {
-    planId: body.planId,
-    hasPrompt: !!body.prompt,
-    sandboxConfig: body.sandboxConfig
-      ? {
-          enabled: body.sandboxConfig.enabled,
-          provider: body.sandboxConfig.provider,
-        }
-      : null,
-    skillsConfig: body.skillsConfig,
-    mcpConfig: body.mcpConfig,
-  });
-
-  if (!body.planId) {
-    return c.json({ error: 'planId is required' }, 400);
-  }
-
-  const plan = getPlan(body.planId);
-  if (!plan) {
-    return c.json({ error: 'Plan not found or expired' }, 404);
-  }
-
-  const session = createSession('execute');
-  const readable = createSSEStream(
-    runExecutionPhase(
-      body.planId,
-      session,
-      body.prompt || '',
-      body.workDir,
-      body.taskId,
-      body.modelConfig,
-      body.sandboxConfig,
-      body.skillsConfig,
-      body.mcpConfig
-    )
-  );
-
-  return new Response(readable, { headers: SSE_HEADERS });
-});
-
-// Legacy: Direct execution (plan + execute in one call)
+// Direct execution - Claude Agent SDK handles task planning internally
 agent.post('/', async (c) => {
   const body = await c.req.json<AgentRequest>();
 
@@ -224,18 +129,6 @@ agent.get('/session/:sessionId', async (c) => {
     phase: session.phase,
     isAborted: session.abortController.signal.aborted,
   });
-});
-
-// Get plan by ID
-agent.get('/plan/:planId', async (c) => {
-  const planId = c.req.param('planId');
-  const plan = getPlan(planId);
-
-  if (!plan) {
-    return c.json({ error: 'Plan not found' }, 404);
-  }
-
-  return c.json(plan);
 });
 
 export default agent;

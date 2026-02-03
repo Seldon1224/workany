@@ -828,6 +828,7 @@ export function useAgent(): UseAgentReturn {
   const abortControllerRef = useRef<AbortController | null>(null);
   const activeTaskIdRef = useRef<string | null>(null); // Track which task is currently active (for message isolation)
   const refreshIntervalRef = useRef<NodeJS.Timeout | null>(null); // For polling messages when restored from background
+  const todoToolUseIdRef = useRef<string | null>(null); // Track TodoWrite tool for plan generation
   // Use refs to track current values for callbacks (to avoid stale closures)
   const taskIdRef = useRef<string | null>(null);
   const isRunningRef = useRef<boolean>(false);
@@ -1421,6 +1422,83 @@ export function useAgent(): UseAgentReturn {
                       return; // Stop processing this stream
                     }
                   }
+
+                  // ✨ Handle TodoWrite tool - generate/update plan dynamically
+                  if (isActive && data.name === 'TodoWrite' && data.input) {
+                    const input = data.input as {
+                      todos?: Array<{
+                        id: string;
+                        description: string;
+                        status?: string;
+                      }>;
+                    };
+
+                    if (input.todos && Array.isArray(input.todos)) {
+                      // First TodoWrite: generate plan and wait for approval
+                      if (!todoToolUseIdRef.current && phase === 'planning') {
+                        todoToolUseIdRef.current = toolUseId;
+
+                        const generatedPlan: TaskPlan = {
+                          id: `plan_${Date.now()}`,
+                          goal: `执行任务: ${initialPrompt.slice(0, 50)}${initialPrompt.length > 50 ? '...' : ''}`,
+                          steps: input.todos.map((todo, index) => ({
+                            id: todo.id || String(index + 1),
+                            description: todo.description,
+                            status: 'pending' as const,
+                          })),
+                          createdAt: new Date(),
+                        };
+
+                        console.log(
+                          '[useAgent] Generated plan from TodoWrite:',
+                          generatedPlan
+                        );
+                        setPlan(generatedPlan);
+                        setPhase('awaiting_approval');
+
+                        // Add plan message to UI
+                        setMessages((prev) => [
+                          ...prev,
+                          { type: 'plan', plan: generatedPlan },
+                        ]);
+                      }
+                      // Subsequent TodoWrite: update step status
+                      else if (phase === 'executing') {
+                        setPlan((currentPlan) => {
+                          if (!currentPlan) return currentPlan;
+
+                          const updatedSteps = currentPlan.steps.map((step) => {
+                            const todo = input.todos!.find(
+                              (t) => t.id === step.id
+                            );
+                            if (todo && todo.status) {
+                              // Map todo status to our status
+                              let status: 'pending' | 'in_progress' | 'completed' =
+                                'pending';
+                              if (todo.status === 'completed') {
+                                status = 'completed';
+                              } else if (todo.status === 'in_progress') {
+                                status = 'in_progress';
+                              }
+                              return {
+                                ...step,
+                                status,
+                              };
+                            }
+                            return step;
+                          });
+
+                          return { ...currentPlan, steps: updatedSteps };
+                        });
+
+                        console.log(
+                          '[useAgent] Updated plan from TodoWrite:',
+                          input.todos.length,
+                          'todos'
+                        );
+                      }
+                    }
+                  }
                 }
 
                 // When we get a tool_result, extract files from the matched tool_use
@@ -1554,8 +1632,9 @@ export function useAgent(): UseAgentReturn {
       setIsRunning(true);
       setMessages([]);
       setInitialPrompt(prompt);
-      setPhase('planning');
+      setPhase('planning'); // 模拟规划阶段,等待 TodoWrite 工具
       setPlan(null);
+      todoToolUseIdRef.current = null; // 重置 TodoWrite 跟踪
 
       // Handle session info
       const sessId = sessionInfo?.sessionId || currentSessionId || '';
@@ -1632,14 +1711,14 @@ export function useAgent(): UseAgentReturn {
 
       try {
         const modelConfig = getModelConfig();
+        const workDir = computedSessionFolder || (await getAppDataDir());
+        const sandboxConfig = getSandboxConfig();
+        const skillsConfig = getSkillsConfig();
+        const mcpConfig = getMcpConfig();
 
-        // If images are attached, use direct execution (skip planning)
-        // because images need to be processed during execution, not planning
+        // 如果有图片附件,添加用户消息到 UI
         if (hasImages) {
-          console.log('[useAgent] Images attached, using direct execution');
-          setPhase('executing');
-
-          // Add user message with attachments to UI
+          console.log('[useAgent] Images attached, adding to UI');
           const userMessage: AgentMessage = {
             type: 'user',
             content: prompt,
@@ -1647,15 +1726,10 @@ export function useAgent(): UseAgentReturn {
           };
           setMessages([userMessage]);
 
-          // Save user message to database (save attachments to files first)
+          // Save user message to database
           try {
             let attachmentRefs: string | undefined;
-            if (
-              attachments &&
-              attachments.length > 0 &&
-              computedSessionFolder
-            ) {
-              // Save attachments to file system and get references
+            if (computedSessionFolder && attachments) {
               const refs = await saveAttachments(
                 computedSessionFolder,
                 attachments
@@ -1665,7 +1739,6 @@ export function useAgent(): UseAgentReturn {
                 '[useAgent] Saved attachments to files:',
                 refs.length
               );
-              // Trigger working files refresh
               setFilesVersion((v) => v + 1);
             }
             await createMessage({
@@ -1677,149 +1750,38 @@ export function useAgent(): UseAgentReturn {
           } catch (error) {
             console.error('Failed to save user message:', error);
           }
-
-          // Use session folder as workDir
-          const workDir = computedSessionFolder || (await getAppDataDir());
-          const sandboxConfig = getSandboxConfig();
-          const skillsConfig = getSkillsConfig();
-
-          const mcpConfig = getMcpConfig();
-
-          // Use direct execution endpoint with images
-          const response = await fetchWithRetry(`${AGENT_SERVER_URL}/agent`, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-              prompt,
-              workDir,
-              taskId: currentTaskId,
-              modelConfig,
-              sandboxConfig,
-              images,
-              skillsConfig,
-              mcpConfig,
-            }),
-            signal: abortController.signal,
-          });
-
-          if (!response.ok) {
-            throw new Error(`Server error: ${response.status}`);
-          }
-
-          await processStream(response, currentTaskId, abortController);
-          return currentTaskId;
         }
 
-        // Phase 1: Request planning (no images)
-        const response = await fetchWithRetry(
-          `${AGENT_SERVER_URL}/agent/plan`,
-          {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-              prompt,
-              modelConfig,
-            }),
-            signal: abortController.signal,
-          }
-        );
+        // 统一使用 /agent 端点进行直接执行
+        // TodoWrite 工具会在 processStream 中被检测并生成计划
+        console.log('[useAgent] Using unified /agent endpoint');
+        const response = await fetchWithRetry(`${AGENT_SERVER_URL}/agent`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            prompt,
+            workDir,
+            taskId: currentTaskId,
+            modelConfig,
+            sandboxConfig,
+            images: hasImages ? images : undefined,
+            skillsConfig,
+            mcpConfig,
+          }),
+          signal: abortController.signal,
+        });
 
         if (!response.ok) {
           throw new Error(`Server error: ${response.status}`);
         }
 
-        // Process planning stream
-        const reader = response.body?.getReader();
-        if (!reader) throw new Error('No response body');
-
-        const decoder = new TextDecoder();
-        let buffer = '';
-
-        // Helper to check if this stream is still for the active task
-        const isActiveTask = () => activeTaskIdRef.current === currentTaskId;
-
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-
-          // Note: We no longer cancel the reader when task switches.
-          // Planning streams continue in background, UI updates are skipped for inactive tasks.
-
-          buffer += decoder.decode(value, { stream: true });
-          const lines = buffer.split('\n');
-          buffer = lines.pop() || '';
-
-          for (const line of lines) {
-            if (line.startsWith('data: ')) {
-              try {
-                const data = JSON.parse(line.slice(6)) as AgentMessage;
-
-                // Check if this task is still active for UI updates
-                const isActive = isActiveTask();
-
-                if (data.type === 'session') {
-                  if (isActive) {
-                    sessionIdRef.current = data.sessionId || null;
-                  }
-                } else if (data.type === 'direct_answer' && data.content) {
-                  // Simple question - direct answer, no plan needed
-                  console.log(
-                    '[useAgent] Received direct answer, no plan needed'
-                  );
-                  // UI updates only for active task
-                  if (isActive) {
-                    setMessages((prev) => [
-                      ...prev,
-                      { type: 'text', content: data.content },
-                    ]);
-                    setPlan(null); // Clear any plan when we get a direct answer
-                    setPhase('idle');
-                  }
-
-                  // Save to database (always)
-                  try {
-                    await createMessage({
-                      task_id: currentTaskId,
-                      type: 'text',
-                      content: data.content,
-                    });
-                    await updateTask(currentTaskId, { status: 'completed' });
-                  } catch (dbError) {
-                    console.error('Failed to save direct answer:', dbError);
-                  }
-                } else if (data.type === 'plan' && data.plan) {
-                  // Complex task - received the plan, wait for approval
-                  // UI updates only for active task
-                  if (isActive) {
-                    setPlan(data.plan);
-                    setPhase('awaiting_approval');
-                    setMessages((prev) => [...prev, data]);
-                  }
-                } else if (data.type === 'text') {
-                  if (isActive) {
-                    setMessages((prev) => [...prev, data]);
-                  }
-                } else if (data.type === 'done') {
-                  // Planning done
-                } else if (data.type === 'error') {
-                  if (isActive) {
-                    setMessages((prev) => [...prev, data]);
-                    setPhase('idle');
-                  }
-                }
-              } catch {
-                // Ignore parse errors
-              }
-            }
-          }
-        }
+        await processStream(response, currentTaskId, abortController);
+        return currentTaskId;
       } catch (error) {
         if ((error as Error).name !== 'AbortError') {
-          const errorMessage = formatFetchError(error, '/agent/plan');
+          const errorMessage = formatFetchError(error, '/agent');
           console.error('[useAgent] Request failed:', error);
 
           // UI updates only for active task
@@ -1856,14 +1818,16 @@ export function useAgent(): UseAgentReturn {
     [isRunning, processStream]
   );
 
-  // Phase 2: Execute the approved plan
+  // Phase 2: Approve the plan (user confirms execution)
   const approvePlan = useCallback(async (): Promise<void> => {
     if (!plan || !taskId || phase !== 'awaiting_approval') return;
 
     // Ensure this task is the active one before execution
     activeTaskIdRef.current = taskId;
 
-    setIsRunning(true);
+    // 只更新前端状态,不调用后端 API
+    // Agent 已经在后台运行,我们只需继续监听 SSE 事件
+    console.log('[useAgent] Plan approved, continuing execution');
     setPhase('executing');
 
     // Initialize plan steps as pending in UI
@@ -1885,154 +1849,10 @@ export function useAgent(): UseAgentReturn {
       console.error('Failed to save plan to database:', error);
     }
 
-    const abortController = new AbortController();
-    abortControllerRef.current = abortController;
-
-    try {
-      // Use session folder directly as workDir (no task subfolder)
-      let workDir: string;
-      if (sessionFolder) {
-        workDir = sessionFolder;
-      } else {
-        const settings = getSettings();
-        workDir = settings.workDir || (await getAppDataDir());
-      }
-      const modelConfig = getModelConfig();
-      const sandboxConfig = getSandboxConfig();
-      const skillsConfig = getSkillsConfig();
-      const mcpConfig = getMcpConfig();
-
-      const response = await fetchWithRetry(
-        `${AGENT_SERVER_URL}/agent/execute`,
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            planId: plan.id,
-            prompt: initialPrompt,
-            workDir,
-            taskId,
-            modelConfig,
-            sandboxConfig,
-            skillsConfig,
-            mcpConfig,
-          }),
-          signal: abortController.signal,
-        }
-      );
-
-      if (!response.ok) {
-        throw new Error(`Server error: ${response.status}`);
-      }
-
-      await processStream(response, taskId, abortController);
-    } catch (error) {
-      if ((error as Error).name !== 'AbortError') {
-        const errorMessage = formatFetchError(error, '/agent/execute');
-        console.error('[useAgent] Execute failed:', error);
-
-        // UI updates only for active task
-        if (activeTaskIdRef.current === taskId) {
-          setMessages((prev) => [
-            ...prev,
-            { type: 'error', message: errorMessage },
-          ]);
-        }
-
-        // Save to database (always)
-        try {
-          await createMessage({
-            task_id: taskId,
-            type: 'error',
-            error_message: errorMessage,
-          });
-          await updateTask(taskId, { status: 'error' });
-        } catch (dbError) {
-          console.error('Failed to save error:', dbError);
-        }
-      }
-    } finally {
-      // Only update running state if this is still the active task
-      if (activeTaskIdRef.current === taskId) {
-        setIsRunning(false);
-        setPhase('idle');
-        abortControllerRef.current = null;
-
-        // Reload messages from database to ensure all are displayed
-        // (in case some were missed during streaming)
-        try {
-          const dbMessages = await getMessagesByTaskId(taskId);
-          const agentMessages: AgentMessage[] = [];
-          for (const msg of dbMessages) {
-            if (msg.type === 'user') {
-              agentMessages.push({
-                type: 'user' as const,
-                content: msg.content || undefined,
-              });
-            } else if (msg.type === 'text') {
-              agentMessages.push({
-                type: 'text' as const,
-                content: msg.content || undefined,
-              });
-            } else if (msg.type === 'tool_use') {
-              agentMessages.push({
-                type: 'tool_use' as const,
-                name: msg.tool_name || undefined,
-                input: msg.tool_input ? JSON.parse(msg.tool_input) : undefined,
-              });
-            } else if (msg.type === 'tool_result') {
-              agentMessages.push({
-                type: 'tool_result' as const,
-                toolUseId: msg.tool_use_id || undefined,
-                output: msg.tool_output || undefined,
-              });
-            } else if (msg.type === 'result') {
-              agentMessages.push({
-                type: 'result' as const,
-                subtype: msg.subtype || undefined,
-              });
-            } else if (msg.type === 'error') {
-              agentMessages.push({
-                type: 'error' as const,
-                message: msg.error_message || undefined,
-              });
-            } else if (msg.type === 'plan') {
-              try {
-                const planData = msg.content
-                  ? (JSON.parse(msg.content) as TaskPlan)
-                  : undefined;
-                if (planData) {
-                  const completedPlan: TaskPlan = {
-                    ...planData,
-                    steps: planData.steps.map((s) => ({
-                      ...s,
-                      status: 'completed' as const,
-                    })),
-                  };
-                  agentMessages.push({
-                    type: 'plan' as const,
-                    plan: completedPlan,
-                  });
-                }
-              } catch {
-                // Ignore parse errors
-              }
-            } else {
-              agentMessages.push({ type: msg.type as AgentMessage['type'] });
-            }
-          }
-          setMessages(agentMessages);
-        } catch (reloadError) {
-          console.error(
-            '[useAgent] Failed to reload messages after execution:',
-            reloadError
-          );
-        }
-      }
-    }
-  }, [plan, taskId, phase, initialPrompt, processStream, sessionFolder]);
+    // 注意:不需要重新调用 API 或创建新的 AbortController
+    // Agent 已经在后台运行,processStream 会继续处理后续的 SSE 事件
+    // 包括 TodoWrite 工具的状态更新
+  }, [plan, taskId, phase]);
 
   // Reject the plan
   const rejectPlan = useCallback((): void => {

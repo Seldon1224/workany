@@ -19,11 +19,7 @@ import { z } from 'zod';
 
 import {
   BaseAgent,
-  formatPlanForExecution,
   getWorkspaceInstruction,
-  parsePlanFromResponse,
-  parsePlanningResponse,
-  PLANNING_INSTRUCTION,
   type SandboxOptions,
 } from '@/core/agent/base';
 // Import plugin definition helpers
@@ -35,12 +31,11 @@ import type {
   AgentOptions,
   AgentProvider,
   ConversationMessage,
-  ExecuteOptions,
   ImageAttachment,
   McpConfig,
-  PlanOptions,
   SkillsConfig,
 } from '@/core/agent/types';
+
 import {
   DEFAULT_API_HOST,
   DEFAULT_API_PORT,
@@ -53,6 +48,7 @@ import { loadMcpServers, type McpServerConfig } from '@/shared/mcp/loader';
 // Logging - uses shared logger (writes to ~/.workany/logs/workany.log)
 // ============================================================================
 import { createLogger, LOG_FILE_PATH } from '@/shared/utils/logger';
+import { createRecognizeImageTool } from './tools/recognize-image';
 
 const logger = createLogger('ClaudeAgent');
 
@@ -683,6 +679,7 @@ const ALLOWED_TOOLS = [
   'Task',
   'LSP',
   'TodoWrite',
+  'RecognizeImage', // ✨ Image recognition tool
 ];
 
 /**
@@ -916,6 +913,21 @@ IMPORTANT: The sandbox is isolated and CANNOT write files to the host filesystem
         }
       ),
     ],
+  });
+}
+
+/**
+ * Create utility MCP server with image recognition and other utility tools
+ */
+function createUtilityMcpServer(
+  apiKey: string,
+  baseUrl?: string,
+  model?: string
+) {
+  return createSdkMcpServer({
+    name: 'utility',
+    version: '1.0.0',
+    tools: [createRecognizeImageTool(apiKey, baseUrl, model)],
   });
 }
 
@@ -1236,6 +1248,13 @@ User's request (answer this AFTER reading the images):
       ];
     }
 
+    // Add utility MCP server (always enabled for image recognition)
+    mcpServers.utility = createUtilityMcpServer(
+      this.config.apiKey || '',
+      this.config.baseUrl,
+      this.config.model
+    );
+
     // Only add mcpServers to options if there are any configured
     if (Object.keys(mcpServers).length > 0) {
       queryOptions.mcpServers = mcpServers;
@@ -1332,279 +1351,6 @@ User's request (answer this AFTER reading the images):
     }
   }
 
-  /**
-   * Planning phase only
-   */
-  async *plan(
-    prompt: string,
-    options?: PlanOptions
-  ): AsyncGenerator<AgentMessage> {
-    const session = this.createSession('planning');
-    yield { type: 'session', sessionId: session.id };
-
-    // Get session working directory
-    const sessionCwd = getSessionWorkDir(
-      options?.cwd || this.config.workDir,
-      prompt,
-      options?.taskId
-    );
-    // Ensure the working directory exists before calling SDK
-    await ensureDir(sessionCwd);
-    console.log(`[Claude ${session.id}] Working directory: ${sessionCwd}`);
-    console.log(`[Claude ${session.id}] Planning phase started`);
-
-    // Include workspace instruction in planning prompt
-    const workspaceInstruction = `
-## CRITICAL: Output Directory
-**ALL files must be saved to: ${sessionCwd}**
-If you need to create any files during planning, use this directory.
-`;
-    const planningPrompt = workspaceInstruction + PLANNING_INSTRUCTION + prompt;
-
-    let fullResponse = '';
-
-    // Ensure Claude Code is installed
-    const claudeCodePath = await ensureClaudeCode();
-    if (!claudeCodePath) {
-      yield {
-        type: 'error',
-        message: '__CLAUDE_CODE_NOT_FOUND__',
-      };
-      yield { type: 'done' };
-      return;
-    }
-
-    // Always use ['user', 'project'] to load skills and MCP from user's ~/.claude directory
-    const planSettingSources: ('user' | 'project')[] = ['user', 'project'];
-
-    const queryOptions: Options = {
-      cwd: sessionCwd, // Set working directory for planning phase
-      settingSources: planSettingSources,
-      allowedTools: [], // No tools in planning phase
-      // Use bypassPermissions since we have no tools - avoids SDK's built-in plan file creation
-      permissionMode: 'bypassPermissions',
-      allowDangerouslySkipPermissions: true,
-      abortController: options?.abortController || session.abortController,
-      env: this.buildEnvConfig(),
-      model: this.config.model,
-      pathToClaudeCodeExecutable: claudeCodePath,
-    };
-
-    try {
-      for await (const message of query({
-        prompt: planningPrompt,
-        options: queryOptions,
-      })) {
-        if (session.abortController.signal.aborted) break;
-
-        if (message.type === 'assistant' && message.message?.content) {
-          for (const block of message.message.content) {
-            if ('text' in block) {
-              fullResponse += block.text;
-              yield { type: 'text', content: block.text };
-            }
-          }
-        }
-      }
-
-      // Parse the planning response - can be direct answer or plan
-      const planningResult = parsePlanningResponse(fullResponse);
-
-      if (planningResult?.type === 'direct_answer') {
-        // Simple question - return direct answer, no plan needed
-        console.log(
-          `[Claude ${session.id}] Direct answer provided (no plan needed)`
-        );
-        yield { type: 'direct_answer', content: planningResult.answer };
-      } else if (
-        planningResult?.type === 'plan' &&
-        planningResult.plan.steps.length > 0
-      ) {
-        // Complex task - return plan
-        this.storePlan(planningResult.plan);
-        console.log(
-          `[Claude ${session.id}] Plan created: ${planningResult.plan.id} with ${planningResult.plan.steps.length} steps`
-        );
-        yield { type: 'plan', plan: planningResult.plan };
-      } else {
-        // Fallback: try to parse as plan directly
-        const plan = parsePlanFromResponse(fullResponse);
-        if (plan && plan.steps.length > 0) {
-          this.storePlan(plan);
-          console.log(
-            `[Claude ${session.id}] Plan created: ${plan.id} with ${plan.steps.length} steps`
-          );
-          yield { type: 'plan', plan };
-        } else {
-          // If no structured response, treat as direct answer
-          console.log(
-            `[Claude ${session.id}] No plan found, treating as direct answer`
-          );
-          yield { type: 'direct_answer', content: fullResponse.trim() };
-        }
-      }
-    } catch (error) {
-      console.error(`[Claude ${session.id}] Planning error:`, error);
-      yield {
-        type: 'error',
-        message: error instanceof Error ? error.message : String(error),
-      };
-    } finally {
-      yield { type: 'done' };
-    }
-  }
-
-  /**
-   * Execute an approved plan
-   */
-  async *execute(options: ExecuteOptions): AsyncGenerator<AgentMessage> {
-    const session = this.createSession('executing');
-    yield { type: 'session', sessionId: session.id };
-
-    // Use the plan passed in options, or fall back to local lookup
-    const plan = options.plan || this.getPlan(options.planId);
-    if (!plan) {
-      console.error(`[Claude ${session.id}] Plan not found: ${options.planId}`);
-      yield { type: 'error', message: `Plan not found: ${options.planId}` };
-      yield { type: 'done' };
-      return;
-    }
-
-    console.log(`[Claude ${session.id}] Using plan: ${plan.id} (${plan.goal})`);
-
-    const sessionCwd = getSessionWorkDir(
-      options.cwd || this.config.workDir,
-      options.originalPrompt,
-      options.taskId
-    );
-    // Ensure the working directory exists before calling SDK
-    await ensureDir(sessionCwd);
-    logger.info(`[Claude ${session.id}] Working directory: ${sessionCwd}`);
-    // Log sandbox config for debugging
-    logger.info(`[Claude ${session.id}] Execute sandbox config:`, {
-      hasSandbox: !!options.sandbox,
-      sandboxEnabled: options.sandbox?.enabled,
-      sandboxProvider: options.sandbox?.provider,
-    });
-    if (options.sandbox?.enabled) {
-      logger.info(
-        `[Claude ${session.id}] Sandbox mode enabled with provider: ${options.sandbox.provider}`
-      );
-    } else {
-      logger.warn(`[Claude ${session.id}] Sandbox NOT enabled for execution`);
-    }
-
-    // Build sandbox options for workspace instruction
-    const sandboxOpts: SandboxOptions | undefined = options.sandbox?.enabled
-      ? {
-          enabled: true,
-          image: options.sandbox.image,
-          apiEndpoint: options.sandbox.apiEndpoint || SANDBOX_API_URL,
-        }
-      : undefined;
-
-    // Pass workDir and sandbox to formatPlanForExecution so skills know where to save files
-    const executionPrompt =
-      formatPlanForExecution(plan, sessionCwd, sandboxOpts) +
-      '\n\nOriginal request: ' +
-      options.originalPrompt;
-    logger.info(
-      `[Claude ${session.id}] Execution phase started for plan: ${options.planId}`
-    );
-
-    const sentTextHashes = new Set<string>();
-    const sentToolIds = new Set<string>();
-
-    // Ensure Claude Code is installed
-    const claudeCodePath = await ensureClaudeCode();
-    if (!claudeCodePath) {
-      yield {
-        type: 'error',
-        message: '__CLAUDE_CODE_NOT_FOUND__',
-      };
-      yield { type: 'done' };
-      return;
-    }
-
-    // Load user-configured MCP servers based on mcpConfig settings
-    const userMcpServers = await loadMcpServers(options.mcpConfig as McpConfig | undefined);
-
-    // Build query options
-    // Use settingSources based on skillsConfig to control skill loading
-    const execSettingSources: ('user' | 'project')[] = this.buildSettingSources(options.skillsConfig);
-    logger.info(`[Claude ${session.id}] Execute skills config:`, options.skillsConfig);
-    logger.info(`[Claude ${session.id}] Execute setting sources: ${execSettingSources.join(', ')}`);
-
-    const queryOptions: Options = {
-      cwd: sessionCwd,
-      tools: { type: 'preset', preset: 'claude_code' },
-      allowedTools: options.allowedTools || ALLOWED_TOOLS,
-      settingSources: execSettingSources,
-      permissionMode: 'bypassPermissions',
-      allowDangerouslySkipPermissions: true,
-      abortController: options.abortController || session.abortController,
-      env: this.buildEnvConfig(),
-      model: this.config.model,
-      pathToClaudeCodeExecutable: claudeCodePath,
-      maxTurns: 200, // Allow more agentic turns before stopping
-    };
-
-    // Initialize MCP servers with user-configured servers
-    const mcpServers: Record<
-      string,
-      McpServerConfig | ReturnType<typeof createSandboxMcpServer>
-    > = {
-      ...userMcpServers,
-    };
-
-    // Add sandbox MCP server if sandbox is enabled
-    if (options.sandbox?.enabled) {
-      mcpServers.sandbox = createSandboxMcpServer(options.sandbox.provider);
-      // Add sandbox tools to allowed tools
-      queryOptions.allowedTools = [
-        ...(options.allowedTools || ALLOWED_TOOLS),
-        'sandbox_run_script',
-        'sandbox_run_command',
-      ];
-    }
-
-    // Only add mcpServers to options if there are any configured
-    if (Object.keys(mcpServers).length > 0) {
-      queryOptions.mcpServers = mcpServers;
-      logger.info(
-        `[Claude ${session.id}] Execute MCP servers loaded: ${Object.keys(mcpServers).join(', ')}`
-      );
-    } else {
-      logger.warn(`[Claude ${session.id}] Execute: No MCP servers configured`);
-    }
-
-    try {
-      for await (const message of query({
-        prompt: executionPrompt,
-        options: queryOptions,
-      })) {
-        if (session.abortController.signal.aborted) break;
-
-        yield* this.processMessage(
-          message,
-          session.id,
-          sentTextHashes,
-          sentToolIds
-        );
-      }
-    } catch (error) {
-      console.error(`[Claude ${session.id}] Execution error:`, error);
-      yield {
-        type: 'error',
-        message: error instanceof Error ? error.message : String(error),
-      };
-    } finally {
-      console.log(`[Claude ${session.id}] Execution done`);
-      this.deletePlan(options.planId);
-      this.sessions.delete(session.id);
-      yield { type: 'done' };
-    }
-  }
 
   /**
    * Sanitize text content to remove internal implementation details
