@@ -350,35 +350,33 @@ RecognizeImage({
 
 **CRITICAL: When using browser_take_screenshot from Playwright MCP:**
 
-1. **Use RELATIVE filenames only** (no paths):
+1. **Recommended: Use full absolute paths**:
    \`\`\`
-   ✅ CORRECT: filename: "captcha.png"
-   ❌ WRONG:   filename: "/full/path/captcha.png"
+   ✅ RECOMMENDED: filename: "${workDir}/.playwright-mcp/captcha.png"
+   ⚠️  ACCEPTABLE:  filename: "captcha.png" (relative path)
    \`\`\`
 
-2. **Playwright saves to:** \`.playwright-mcp/\` subdirectory automatically
+2. **Playwright default save directory:** \`.playwright-mcp/\` subdirectory
 
 3. **Complete workflow for captcha recognition:**
    \`\`\`
-   Step 1: Take screenshot with relative filename
+   Step 1: Take screenshot with full path
    browser_take_screenshot({
-     element: "验证码图片",
-     filename: "captcha.png"  // ✅ Relative name only
+     element: "captcha image selector",
+     filename: "${workDir}/.playwright-mcp/captcha.png"  // ✅ Use full path
    })
    
-   Step 2: Get full path from response
-   // Playwright returns: .playwright-mcp/captcha.png
-   
-   Step 3: Use RecognizeImage with absolute path
+   Step 2: Use the same path for image recognition
    RecognizeImage({
      imagePath: "${workDir}/.playwright-mcp/captcha.png"
    })
    \`\`\`
 
-**Why this matters:**
-- Playwright MCP enforces security by restricting file writes to \`.playwright-mcp/\` directory
-- Using absolute paths will cause: "Error: Resolved file path is outside of the output directory"
-- Always use relative filenames and let Playwright handle the directory structure
+**Why use full paths:**
+- Explicitly specify file save location, avoiding path confusion
+- Consistent path format with RecognizeImage tool
+- Easier to track and manage screenshot files
+- Playwright MCP automatically ensures files are saved in \`.playwright-mcp/\` directory
 `;
 
   // Add sandbox instructions when enabled
