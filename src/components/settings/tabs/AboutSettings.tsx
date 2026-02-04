@@ -1,8 +1,6 @@
 import { useEffect, useState } from 'react';
 import ImageLogo from '@/assets/logo.png';
 import { useLanguage } from '@/shared/providers/language-provider';
-import { getVersion } from '@tauri-apps/api/app';
-import { openUrl } from '@tauri-apps/plugin-opener';
 import {
   Download,
   ExternalLink,
@@ -14,6 +12,7 @@ import {
 // Helper function to open external URLs
 const openExternalUrl = async (url: string) => {
   try {
+    const { openUrl } = await import('@tauri-apps/plugin-opener');
     await openUrl(url);
   } catch {
     window.open(url, '_blank');
@@ -25,7 +24,8 @@ export function AboutSettings() {
   const [version, setVersion] = useState('0.0.0');
 
   useEffect(() => {
-    getVersion()
+    import('@tauri-apps/api/app')
+      .then((module) => module.getVersion())
       .then(setVersion)
       .catch(() => setVersion('0.0.0'));
   }, []);

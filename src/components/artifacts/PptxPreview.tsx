@@ -1,6 +1,5 @@
 import { useEffect, useState } from 'react';
 import { cn } from '@/shared/lib/utils';
-import { readFile, stat } from '@tauri-apps/plugin-fs';
 import JSZip from 'jszip';
 import {
   ChevronLeft,
@@ -12,7 +11,7 @@ import {
 
 import { FileTooLarge } from './FileTooLarge';
 import type { PptxSlide, PreviewComponentProps } from './types';
-import { isRemoteUrl, MAX_PREVIEW_SIZE, openFileExternal } from './utils';
+import { getFileStatViaAPI, isRemoteUrl, MAX_PREVIEW_SIZE, openFileExternal, readFileViaAPI } from './utils';
 
 export function PptxPreview({ artifact }: PreviewComponentProps) {
   const [slides, setSlides] = useState<PptxSlide[]>([]);
@@ -42,7 +41,7 @@ export function PptxPreview({ artifact }: PreviewComponentProps) {
       try {
         // Check file size first
         if (!isRemoteUrl(artifact.path)) {
-          const fileInfo = await stat(artifact.path);
+          const fileInfo = await getFileStatViaAPI(artifact.path);
           if (fileInfo.size > MAX_PREVIEW_SIZE) {
             console.log('[PPTX Preview] File too large:', fileInfo.size);
             setFileTooLarge(fileInfo.size);
@@ -65,8 +64,8 @@ export function PptxPreview({ artifact }: PreviewComponentProps) {
           }
           arrayBuffer = await response.arrayBuffer();
         } else {
-          const data = await readFile(artifact.path);
-          arrayBuffer = data.buffer;
+          const data = await readFileViaAPI(artifact.path);
+          arrayBuffer = data.buffer as ArrayBuffer;
         }
 
         console.log('[PPTX Preview] Loaded', arrayBuffer.byteLength, 'bytes');

@@ -13,7 +13,7 @@
  * - Development: 2026 (run `pnpm dev:api` separately)
  * - Production: 2620 (bundled sidecar)
  */
-export const API_PORT = import.meta.env.PROD ? 2620 : 2026;
+export const API_PORT = import.meta.env.PROD ? 2620 : 2027;
 
 /**
  * API base URL

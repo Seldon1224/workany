@@ -9,7 +9,6 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { PreviewStatus } from '@/shared/hooks/useVitePreview';
 import { cn } from '@/shared/lib/utils';
 import { useLanguage } from '@/shared/providers/language-provider';
-import { openUrl } from '@tauri-apps/plugin-opener';
 import {
   AlertCircle,
   ExternalLink,
@@ -50,10 +49,11 @@ export function VitePreview({
     setIframeKey((k) => k + 1);
   }, []);
 
-  // Handle open in new tab (use Tauri opener plugin)
+  // Handle open in new tab (use Tauri opener plugin if available)
   const handleOpenExternal = useCallback(async () => {
     if (previewUrl) {
       try {
+        const { openUrl } = await import('@tauri-apps/plugin-opener');
         await openUrl(previewUrl);
       } catch {
         // Fallback to window.open if Tauri plugin fails
