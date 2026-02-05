@@ -178,33 +178,65 @@ RecognizeImage({{
 
 **CRITICAL: When using browser_take_screenshot from Playwright MCP:**
 
-1. **Recommended: Use full absolute paths**:
+1. **MANDATORY: ALWAYS use `ref` parameter to specify the exact element to screenshot**
+   - ❌ WRONG: Using generic text like `element: "验证码图片"` - This will fail!
+   - ✅ CORRECT: First get the element ref, then use it in screenshot
+   
+   **Correct workflow:**
    ```
-   ✅ RECOMMENDED: filename: "{work_dir}/.playwright-mcp/captcha.png"
-   ⚠️  ACCEPTABLE:  filename: "captcha.png" (relative path)
-   ```
-
-2. **Playwright default save directory:** `.playwright-mcp/` subdirectory
-
-3. **Complete workflow for captcha recognition:**
-   ```
-   Step 1: Take screenshot with full path
+   Step 1: Navigate and get element references
+   browser_navigate({{
+     "url": "https://example.com"
+   }})
+   // Note the 'ref' values returned for elements (e.g., "e123", "e456")
+   
+   Step 2: Screenshot SPECIFIC element using its ref
    browser_take_screenshot({{
-     element: "captcha image selector",
-     filename: "{work_dir}/.playwright-mcp/captcha.png"  // ✅ Use full path
+     "ref": "e123",  // ✅ Use the actual ref from navigation result
+     "filename": ".playwright-mcp/captcha.png",
+     "type": "png"
+   }})
+   ```
+
+2. **IMPORTANT: Use RELATIVE paths only (DO NOT include {work_dir} or ~)**:
+   ```
+   ✅ CORRECT:   filename: ".playwright-mcp/captcha.png"
+   ✅ CORRECT:   filename: "captcha.png"
+   ❌ WRONG:     filename: "{work_dir}/.playwright-mcp/captcha.png"
+   ❌ WRONG:     filename: "~/.workany/sessions/.../.playwright-mcp/captcha.png"
+   ```
+
+3. **Why use ref parameter:**
+   - `ref` ensures you screenshot ONLY the specific element (e.g., captcha image)
+   - Without `ref`, the screenshot may fail or capture wrong content
+   - The `ref` value comes from Playwright's previous navigation/interaction results
+
+4. **Playwright default save directory:** `.playwright-mcp/` subdirectory
+
+5. **Complete workflow for captcha recognition:**
+   ```
+   Step 1: Navigate to page and identify captcha element
+   browser_navigate({{
+     "url": "https://example.com/login"
+   }})
+   // Check the output for element refs like: img[ref="e123"]
+   
+   Step 2: Screenshot the SPECIFIC captcha element using its ref
+   browser_take_screenshot({{
+     "ref": "e123",  // ✅ CRITICAL: Use the actual ref value
+     "filename": ".playwright-mcp/captcha.png",
+     "type": "png"
    }})
    
-   Step 2: Use the same path for image recognition
+   Step 3: Use ABSOLUTE path for image recognition
    RecognizeImage({{
-     imagePath: "{work_dir}/.playwright-mcp/captcha.png"
+     "imagePath": "{work_dir}/.playwright-mcp/captcha.png"
    }})
    ```
 
-**Why use full paths:**
-- Explicitly specify file save location, avoiding path confusion
-- Consistent path format with RecognizeImage tool
-- Easier to track and manage screenshot files
-- Playwright MCP automatically ensures files are saved in `.playwright-mcp/` directory
+6. **Path format summary:**
+   - browser_take_screenshot: Use RELATIVE path (e.g., ".playwright-mcp/captcha.png")
+   - RecognizeImage: Use ABSOLUTE path (e.g., "{work_dir}/.playwright-mcp/captcha.png")
 """
     
     # Add sandbox instructions when enabled

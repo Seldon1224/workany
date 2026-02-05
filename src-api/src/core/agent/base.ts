@@ -350,33 +350,38 @@ RecognizeImage({
 
 **CRITICAL: When using browser_take_screenshot from Playwright MCP:**
 
-1. **Recommended: Use full absolute paths**:
+1. **IMPORTANT: Use RELATIVE paths only (DO NOT include ${workDir} or ~)**:
    \`\`\`
-   ✅ RECOMMENDED: filename: "${workDir}/.playwright-mcp/captcha.png"
-   ⚠️  ACCEPTABLE:  filename: "captcha.png" (relative path)
+   ✅ CORRECT:   filename: ".playwright-mcp/captcha.png"
+   ✅ CORRECT:   filename: "captcha.png"
+   ❌ WRONG:     filename: "${workDir}/.playwright-mcp/captcha.png"
+   ❌ WRONG:     filename: "~/.workany/sessions/.../.playwright-mcp/captcha.png"
    \`\`\`
 
-2. **Playwright default save directory:** \`.playwright-mcp/\` subdirectory
+2. **Why use relative paths:**
+   - Playwright MCP automatically saves files relative to the current working directory (${workDir})
+   - Using absolute paths or paths with ~ will cause double-path issues
+   - The final saved path will be: ${workDir}/{filename}
 
-3. **Complete workflow for captcha recognition:**
+3. **Playwright default save directory:** \`.playwright-mcp/\` subdirectory
+
+4. **Complete workflow for captcha recognition:**
    \`\`\`
-   Step 1: Take screenshot with full path
+   Step 1: Take screenshot with RELATIVE path
    browser_take_screenshot({
      element: "captcha image selector",
-     filename: "${workDir}/.playwright-mcp/captcha.png"  // ✅ Use full path
+     filename: ".playwright-mcp/captcha.png"  // ✅ Use RELATIVE path
    })
    
-   Step 2: Use the same path for image recognition
+   Step 2: Use ABSOLUTE path for image recognition
    RecognizeImage({
-     imagePath: "${workDir}/.playwright-mcp/captcha.png"
+     imagePath: "${workDir}/.playwright-mcp/captcha.png"  // ✅ Use ABSOLUTE path
    })
    \`\`\`
 
-**Why use full paths:**
-- Explicitly specify file save location, avoiding path confusion
-- Consistent path format with RecognizeImage tool
-- Easier to track and manage screenshot files
-- Playwright MCP automatically ensures files are saved in \`.playwright-mcp/\` directory
+5. **Path format summary:**
+   - browser_take_screenshot: Use RELATIVE path (e.g., ".playwright-mcp/captcha.png")
+   - RecognizeImage: Use ABSOLUTE path (e.g., "${workDir}/.playwright-mcp/captcha.png")
 `;
 
   // Add sandbox instructions when enabled

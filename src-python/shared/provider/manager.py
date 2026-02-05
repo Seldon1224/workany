@@ -361,8 +361,25 @@ class ProviderManager:
 
         if not self._config.agent:
             agent_type = os.getenv("AGENT_PROVIDER", "claude")
+            # Load agent configuration from environment variables
+            agent_config = {}
+            if agent_type == "claude":
+                # Load Anthropic/Claude configuration
+                api_key = os.getenv("ANTHROPIC_API_KEY")
+                base_url = os.getenv("ANTHROPIC_BASE_URL")
+                model = os.getenv("ANTHROPIC_MODEL")
+                
+                if api_key:
+                    agent_config["apiKey"] = api_key
+                if base_url:
+                    agent_config["baseUrl"] = base_url
+                if model:
+                    agent_config["model"] = model
+            
             self._config.agent = ProviderSelectionConfig(
-                category="agent", type=agent_type
+                category="agent", 
+                type=agent_type,
+                config=agent_config if agent_config else None
             )
 
         logger.info(f"Initialized with config: {self._config.to_dict()}")

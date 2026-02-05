@@ -19,40 +19,45 @@ class AgentSession:
     is_aborted: bool = False
 
 
-@dataclass
-class ConversationMessage:
+from pydantic import BaseModel, Field
+
+
+class ConversationMessage(BaseModel):
     """Conversation message for context."""
     role: Literal["user", "assistant"]
     content: str
 
 
-@dataclass
-class ImageAttachment:
+class ImageAttachment(BaseModel):
     """Image attachment for agent input."""
-    data: str  # Base64 encoded
-    mime_type: str
+    data: str = Field(..., description="Base64 encoded image data")
+    mime_type: str = Field(..., alias="mimeType", description="MIME type of the image")
+    
+    class Config:
+        populate_by_name = True  # Allow both mime_type and mimeType
 
 
-@dataclass
-class SandboxConfig:
+class SandboxConfig(BaseModel):
     """Sandbox configuration."""
     enabled: bool = False
     provider: Optional[str] = None
-    api_endpoint: Optional[str] = None
+    api_endpoint: Optional[str] = Field(None, alias="apiEndpoint")
+    
+    class Config:
+        populate_by_name = True
 
 
-@dataclass
-class SkillsConfig:
+class SkillsConfig(BaseModel):
     """Skills configuration."""
     enabled: bool = True
-    sources: list[Literal["user", "project"]] = field(default_factory=lambda: ["user"])
+    sources: list[Literal["user", "project"]] = Field(default_factory=lambda: ["user"])
 
 
-@dataclass
-class McpConfig:
+class McpConfig(BaseModel):
     """MCP configuration."""
     enabled: bool = True
-    servers: dict[str, Any] = field(default_factory=dict)
+    servers: dict[str, Any] = Field(default_factory=dict)
+
 
 
 @dataclass

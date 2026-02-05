@@ -5,6 +5,8 @@ import os
 from pathlib import Path
 from typing import AsyncGenerator, Optional
 
+import aiofiles
+
 from claude_agent_sdk import ClaudeSDKClient, ClaudeAgentOptions
 from claude_agent_sdk import (
     AssistantMessage,
@@ -81,6 +83,55 @@ class ClaudeAgent(IAgent):
         
         return env
     
+    async def _save_images_to_disk(
+        self,
+        images: list,
+        work_dir: str
+    ) -> list[str]:
+        """Save image attachments to disk.
+        
+        Args:
+            images: List of ImageAttachment objects
+            work_dir: Working directory to save images
+        
+        Returns:
+            List of saved image file paths
+        """
+        import base64
+        import time
+        
+        saved_paths = []
+        
+        if not images:
+            return saved_paths
+        
+        # Ensure work directory exists
+        Path(work_dir).mkdir(parents=True, exist_ok=True)
+        
+        for i, image in enumerate(images):
+            try:
+                # Determine file extension from MIME type
+                ext = image.mime_type.split('/')[-1] if image.mime_type else 'png'
+                filename = f"image_{int(time.time() * 1000)}_{i}.{ext}"
+                file_path = Path(work_dir) / filename
+                
+                # Remove data URL prefix if present (e.g., "data:image/png;base64,")
+                base64_data = image.data
+                if ',' in base64_data:
+                    base64_data = base64_data.split(',', 1)[1]
+                
+                # Decode and save
+                image_bytes = base64.b64decode(base64_data)
+                async with aiofiles.open(file_path, 'wb') as f:
+                    await f.write(image_bytes)
+                
+                saved_paths.append(str(file_path))
+                logger.info(f"Saved image to: {file_path}")
+            except Exception as e:
+                logger.error(f"Failed to save image {i}: {e}")
+        
+        return saved_paths
+    
     def _format_conversation_history(
         self,
         conversation: Optional[list[ConversationMessage]]
@@ -124,11 +175,55 @@ class ClaudeAgent(IAgent):
         # Build full prompt with workspace instruction and conversation history
         from core.agent.workspace import get_workspace_instruction
         
+        # Build SDK options
+        sdk_options = ClaudeAgentOptions()
+        
+        # Set working directory and expand ~ to home directory
+        cwd = options.cwd or DEFAULT_WORK_DIR
+        if cwd.startswith("~"):
+            cwd = os.path.expanduser(cwd)
+        Path(cwd).mkdir(parents=True, exist_ok=True)
+        
+        # Handle image attachments - save to disk and reference in prompt
+        image_instruction = ""
+        if options.images and len(options.images) > 0:
+            logger.info(f"Processing {len(options.images)} image(s)")
+            for i, img in enumerate(options.images):
+                logger.info(f"Image {i}: mimeType={img.mime_type}, dataLength={len(img.data)}")
+            
+            saved_image_paths = await self._save_images_to_disk(options.images, cwd)
+            logger.info(f"Saved {len(saved_image_paths)} images to disk: {', '.join(saved_image_paths)}")
+            
+            if saved_image_paths:
+                images_list = '\n'.join([f"{i+1}. {p}" for i, p in enumerate(saved_image_paths)])
+                image_instruction = f"""
+## 🖼️ MANDATORY IMAGE ANALYSIS - DO THIS FIRST
+
+**STOP! Before doing anything else, you MUST read the attached image(s).**
+
+The user has attached {len(saved_image_paths)} image file(s):
+{images_list}
+
+**YOUR FIRST ACTION MUST BE:**
+Use the Read tool to view each image file listed above. The Read tool supports image files (PNG, JPG, etc.) and will show you the visual content.
+
+Example:
+```
+Read tool: file_path="{saved_image_paths[0]}"
+```
+
+**CRITICAL RULES:**
+- DO NOT respond to the user's question until you have READ and SEEN the actual image content
+- DO NOT guess or assume what the image contains
+- After reading the image, describe what you actually see in the image
+- Base your response ONLY on the actual visual content you observe
+
+---
+User's request (answer this AFTER reading the images):
+"""
+        
         # Get workspace instruction
-        workspace_instruction = get_workspace_instruction(
-            options.cwd or DEFAULT_WORK_DIR,
-            options.sandbox
-        )
+        workspace_instruction = get_workspace_instruction(cwd, options.sandbox)
         
         # Build conversation history
         conversation_context = ""
@@ -136,15 +231,12 @@ class ClaudeAgent(IAgent):
             history = self._format_conversation_history(options.conversation)
             conversation_context = history + "\n"
         
-        # Combine: workspace instruction + conversation + prompt
-        full_prompt = workspace_instruction + conversation_context + prompt
-        
-        # Build SDK options
-        sdk_options = ClaudeAgentOptions()
-        
-        # Set working directory
-        cwd = options.cwd or DEFAULT_WORK_DIR
-        Path(cwd).mkdir(parents=True, exist_ok=True)
+        # Combine: workspace instruction + conversation + image instruction (if any) + prompt
+        full_prompt = workspace_instruction + conversation_context
+        if image_instruction:
+            full_prompt += image_instruction
+        full_prompt += prompt
+
         
         # Build environment config
         env_config = self._build_env_config()
@@ -206,7 +298,6 @@ class ClaudeAgent(IAgent):
         # Load and configure MCP servers
         from shared.mcp.loader import load_mcp_servers
         from claude_agent_sdk import create_sdk_mcp_server
-        from core.agent.tools import recognize_image_tool
         
         mcp_config_dict = None
         if options.mcp_config:
@@ -215,10 +306,17 @@ class ClaudeAgent(IAgent):
         user_mcp_servers = await load_mcp_servers(mcp_config_dict)
         
         # Create utility MCP server for image recognition
+        # Pass API key from config to the tool factory function
+        from core.agent.tools.recognize_image import create_recognize_image_tool
+        
         utility_server = create_sdk_mcp_server(
             name="utility",
             version="1.0.0",
-            tools=[recognize_image_tool]
+            tools=[create_recognize_image_tool(
+                api_key=self.config.api_key or "",
+                base_url=self.config.base_url,
+                model=self.config.model
+            )]
         )
         
         # Combine user MCP servers with utility server
