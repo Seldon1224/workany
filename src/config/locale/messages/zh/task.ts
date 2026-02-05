@@ -20,6 +20,8 @@ export default {
   waitingForTask: '等待任务执行...',
   noArtifacts: '暂无输出产物',
   tools: '工具',
+  toolInput: '输入',
+  toolOutput: '输出',
   noTools: '暂无工具调用',
   skills: '技能',
   noSkills: '暂无技能调用',

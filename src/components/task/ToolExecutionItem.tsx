@@ -2,6 +2,8 @@ import { useState } from 'react';
 import type { AgentMessage } from '@/shared/hooks/useAgent';
 import { cn } from '@/shared/lib/utils';
 import { X } from 'lucide-react';
+import { getSettings } from '@/shared/db/settings';
+import { translations, type Language } from '@/config/locale';
 
 interface ToolExecutionItemProps {
   message: AgentMessage;
@@ -280,6 +282,14 @@ function ToolDetailModal({
     }
   };
 
+  // Get translations
+  const t = (() => {
+    const settings = getSettings();
+    // Default to system language if not set, or fallback to zh-CN if detection fails
+    const lang = (settings.language || 'zh-CN') as Language;
+    return translations[lang]?.task || translations['zh-CN'].task;
+  })();
+
   const formatOutput = (output: string | undefined): string => {
     if (!output) return 'No output';
     // Extract content from <tool_use_error> tag if present
@@ -287,6 +297,18 @@ function ToolDetailModal({
       /<tool_use_error>([\s\S]*?)<\/tool_use_error>/
     );
     let cleanOutput = toolUseErrorMatch ? toolUseErrorMatch[1].trim() : output;
+
+    // Try to parse as JSON to unescape unicode characters and pretty print
+    try {
+      const parsed = JSON.parse(cleanOutput);
+      // Only re-format if it's an object or array (avoid quoting simple strings)
+      if (typeof parsed === 'object' && parsed !== null) {
+        cleanOutput = JSON.stringify(parsed, null, 2);
+      }
+    } catch {
+      // Not a JSON object/array, use original
+    }
+
     // Truncate very long output
     if (cleanOutput.length > 10000) {
       return cleanOutput.slice(0, 10000) + '\n\n... (truncated)';
@@ -326,7 +348,7 @@ function ToolDetailModal({
           {/* Input Section */}
           <div>
             <h3 className="text-muted-foreground mb-2 text-sm font-medium">
-              Input
+              {t.toolInput}
             </h3>
             <pre className="bg-muted/50 max-h-[200px] overflow-auto rounded-md p-3 font-mono text-xs break-words whitespace-pre-wrap">
               {formatInput(input)}
@@ -336,7 +358,7 @@ function ToolDetailModal({
           {/* Output Section */}
           <div>
             <h3 className="text-muted-foreground mb-2 text-sm font-medium">
-              Output
+              {t.toolOutput}
             </h3>
             <pre
               className={cn(

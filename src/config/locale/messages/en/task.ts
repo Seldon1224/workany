@@ -20,6 +20,8 @@ export default {
   waitingForTask: 'Waiting for task execution...',
   noArtifacts: 'No artifacts yet',
   tools: 'Tools',
+  toolInput: 'Input',
+  toolOutput: 'Output',
   noTools: 'No tools used',
   skills: 'Skills',
   noSkills: 'No skills used',
